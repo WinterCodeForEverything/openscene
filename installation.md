@@ -1,5 +1,18 @@
 # Installation Instruction
 
+If you are using this codebase for Chat-Scene's preprocessing, follow the steps below (instead of the original instruction):
+
+```bash
+conda create -n openscene python=3.9
+conda activate openscene
+conda install pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install scipy==1.13.0 tqdm==4.66.5 imageio==2.34.1 plyfile==1.0.3 opencv-python==4.9.0.80 tensorflow==2.12.0
+pip install transformers==4.39.3
+```
+
+
+## Original Instruction
+
 Start by cloning the repo:
 ```bash
 git clone --recursive git@github.com:pengsongyou/openscene.git
