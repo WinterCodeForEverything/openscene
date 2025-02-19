@@ -38,19 +38,20 @@ def get_img_embed(image_paths):
     return torch.cat(hidden_states, 0)
 
 
+# import numpy as np
+# import torch
+# from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+
 def seg_by_SAM(image):
     """
-    Perform instance segmentation on an image using SAM.
+    Perform instance segmentation on an image using SAM, filtering out overlapping or duplicate masks.
 
     Args:
-        image_path (str): Path to the input image.
+        image (np.ndarray): Input image array.
 
     Returns:
         list: A list of dictionaries containing segmentation masks and related information.
     """
-    # # Load the image using imageio.v2.imread
-    # image = iio.imread(image_path)
-
     # Ensure the image is in RGB format
     if image.ndim == 2 or image.shape[2] == 1:
         # Convert grayscale to RGB by repeating the channels
@@ -67,13 +68,76 @@ def seg_by_SAM(image):
     sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
     sam.to(device=device)
 
-    # Create an automatic mask generator
-    mask_generator = SamAutomaticMaskGenerator(sam)
+    # Create an automatic mask generator with adjusted parameters
+    mask_generator = SamAutomaticMaskGenerator(
+        model=sam,
+        points_per_side=32,  # Adjust as needed
+        pred_iou_thresh=0.9,  # Filter out low-quality masks
+        stability_score_thresh=0.9,  # Filter based on mask stability
+        min_mask_region_area=100,  # Remove small masks
+        box_nms_thresh=0.8,  # Non-maximum suppression threshold for boxes
+        crop_nms_thresh=0.8  # Non-maximum suppression threshold for crops
+    )
 
     # Generate masks for the image
     masks = mask_generator.generate(image)
-
     return masks
+
+    # # Further filter masks based on mask IoU to remove duplicates
+    # filtered_masks = []
+    # for i, mask_i in enumerate(masks):
+    #     keep = True
+    #     for j, mask_j in enumerate(filtered_masks):
+    #         if i != j:
+    #             # Calculate IoU between masks
+    #             intersection = np.logical_and(mask_i['segmentation'], mask_j['segmentation']).sum()
+    #             union = np.logical_or(mask_i['segmentation'], mask_j['segmentation']).sum()
+    #             iou = intersection / union
+    #             if iou > 0.8:  # Adjust IoU threshold as needed
+    #                 keep = False
+    #                 break
+    #     if keep:
+    #         filtered_masks.append(mask_i)
+
+    # return filtered_masks
+
+
+# def seg_by_SAM(image):
+#     """
+#     Perform instance segmentation on an image using SAM.
+
+#     Args:
+#         image_path (str): Path to the input image.
+
+#     Returns:
+#         list: A list of dictionaries containing segmentation masks and related information.
+#     """
+#     # # Load the image using imageio.v2.imread
+#     # image = iio.imread(image_path)
+
+#     # Ensure the image is in RGB format
+#     if image.ndim == 2 or image.shape[2] == 1:
+#         # Convert grayscale to RGB by repeating the channels
+#         image = np.stack([image] * 3, axis=-1)
+#     elif image.shape[2] == 4:
+#         # Convert RGBA to RGB by discarding the alpha channel
+#         image = image[:, :, :3]
+
+#     # Load the SAM model
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     model_type = "vit_h"  # or "vit_l" or "vit_b"
+#     checkpoint_path = "./checkpoints/sam_vit_h_4b8939.pth"  # Update with your checkpoint path
+
+#     sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
+#     sam.to(device=device)
+
+#     # Create an automatic mask generator
+#     mask_generator = SamAutomaticMaskGenerator(sam)
+
+#     # Generate masks for the image
+#     masks = mask_generator.generate(image)
+
+#     return masks
 
 
 def visualize_projection(b, shot_mask, image, output_dir="output_images"):
@@ -165,7 +229,7 @@ def process_one_scene(data_path, out_dir, args):
     vis_id = torch.zeros((n_points_cur, num_img), dtype=int, device=device)
     inst_img_feats = defaultdict(list)
     
-    img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
+    #img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
 
     for img_id, img_dir in enumerate(img_dirs):
         # load pose
@@ -176,6 +240,8 @@ def process_one_scene(data_path, out_dir, args):
         image = imageio.v2.imread(img_dir)
         
         seg_masks = seg_by_SAM(image)
+        
+        seg_masks_used = torch.zeros((len(seg_masks)), dtype=bool)
         
         # for idx, seg_mask in  enumerate(seg_masks):
         #     visualize_projection(idx, seg_mask['segmentation'], image, output_dir=f"{out_dir}/{scene_id}/{img_id}")
@@ -209,10 +275,15 @@ def process_one_scene(data_path, out_dir, args):
             if len(single_inst_points) < 3: continue
             points_num = single_inst_points.shape[0]
             
+            #max_score = 0
             for idx, seg_mask in enumerate(seg_masks):
+                if seg_masks_used[idx]: continue
                 mask = seg_mask['segmentation']
                 if float( np.sum(mask[single_inst_points[:, 0], single_inst_points[:, 1]]) ) / points_num > 0.5:
+                    # if max_score < seg_mask['']:
+                    # seg_masks_used[idx] = True
                     if mask.sum() > 50:
+                        seg_masks_used[idx] = True
                         visualize_projection(idx, mask, image, output_dir=f"{out_dir}/{scene_id}/{img_id}/{instance_class_labels[instid]}")                   
             #         x0, y0, w, h = seg_mask['bbox']
             #         x1, y1 = x0 + w, y0 + h
