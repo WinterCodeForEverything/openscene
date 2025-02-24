@@ -18,6 +18,32 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
 model = AutoModel.from_pretrained('facebook/dinov2-large').to(device)
 
+needed_categories = ['cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 
+                            'picture', 'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 
+                                    'toilet', 'sink', 'bathtub', 'other furniture']
+
+# {'cabinet': 'good', 
+#  'bed': 'good', 
+#  'chair': 'good', 
+#  'sofa': 'average', 
+#  'table': 'average', 
+#  'door': 'good', 
+#  'window': 'average', 
+#  'bookshelf': 'good', 
+# 'picture': 'good', 
+# 'counter': 'average', 
+# 'desk': 'good', 
+# 'curtain': 'good', 
+# 'refrigerator': 'good', 
+# 'shower curtain': 'average', 
+# 'toilet': 'good', 
+# 'sink': 'good', 
+# 'bathtub': 'good',
+# }
+
+#1 big masks are usually better than small masks
+
+
 
 def get_img_embed(image_paths):
     # st_time = time.time()
@@ -50,6 +76,36 @@ def get_args():
     args = parser.parse_args()
     return args
 
+
+def visualize_projection(b, shot_mask, image, output_dir="output_images"):
+    """
+    Visualize the projection of 3D points onto a 2D image and save the output images.
+    Args:
+        b (int): Batch index.
+        shot_mask (torch.Tensor): Tensor of shape (H, W) containing the mask.
+        image (torch.Tensor): Tensor of shape (3, H, W) containing the image.
+        output_dir (str): Directory to save the output images.
+    """
+    import matplotlib.pyplot as plt
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    ## Convert the image tensor to a numpy array and transpose to (H, W, 3)
+    #image_np = image.permute(1, 2, 0).cpu().numpy()
+
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image)
+    mask = shot_mask.cpu().numpy()
+    plt.imshow(mask, alpha=0.5, cmap='Reds')
+    plt.title(f"Projection on Image {b}")
+
+    output_path = os.path.join(output_dir, f"projection_{b}.jpg")
+    plt.savefig(output_path)
+    plt.close()
+    
+    
+    
 
 def process_one_scene(data_path, out_dir, args):
     '''Process one scene.'''
@@ -100,17 +156,17 @@ def process_one_scene(data_path, out_dir, args):
 
     ################ Feature Fusion ###################
     vis_id = torch.zeros((n_points_cur, num_img), dtype=int, device=device)
-    inst_img_feats = defaultdict(list)
+    # inst_img_feats = defaultdict(list)
     
-    img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
+    # img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
 
     for img_id, img_dir in enumerate(img_dirs):
         # load pose
         posepath = img_dir.replace('color', 'pose').replace('.jpg', '.txt')
         pose = np.loadtxt(posepath)
 
-        # #load image and convert to tensor
-        # image = imageio.v2.imread(img_dir)
+        #load image and convert to tensor
+        image = imageio.v2.imread(img_dir)
         
         # load depth and convert to meter
         depth = imageio.v2.imread(img_dir.replace('color', 'depth').replace('jpg', 'png')) / depth_scale
@@ -146,34 +202,40 @@ def process_one_scene(data_path, out_dir, args):
             if volume[instid, img_id] < delta_H * delta_W:
                 continue
             x0, y0, x1, y1 = crop_bbox[instid, img_id].to(int).tolist()
-            # crop_mask = torch.zeros((H, W), dtype=bool, device=device)
-            # crop_mask[x0:x1, y0:y1] = True
-            # if crop_mask.sum() > 50:
-            #     visualize_projection(img_id, crop_mask, image, output_dir=f"{out_dir}/{scene_id}/{instance_class_labels[instid]}")
-            # continue
-        
-            crop_img_feats = img_dinov2_feats[img_id, (x0 // delta_H):((x1+delta_H-1) // delta_H), (y0 // delta_W):((y1+delta_W-1) // delta_W)]
-            inst_img_feats[instid].append((volume[instid, img_id].cpu(), crop_img_feats.flatten(0, 1).mean(0).cpu()))
-
-    all_feats = {}
-    for instid in range(inst_num):
-        if instid not in inst_img_feats:
+            crop_mask = torch.zeros((H, W), dtype=bool, device=device)
+            crop_mask[x0:x1, y0:y1] = True
+            #lower the caption of instance_class_labels
+            
+            #if instance_class_labels[instid] in needed_categories:
+            if "sofa" in instance_class_labels[instid]:
+                visualize_projection(f"{img_id}", crop_mask, image, output_dir=f"{out_dir}/sofa/{scene_id}_{instid}")
+                #visualize_projection(f"{img_id}", crop_mask, image, output_dir=f"{out_dir}/{instance_class_labels[instid]}/{scene_id}_{instid}")
+            else:
+                print(f"{scene_id}_{img_id}: {instance_class_labels[instid]}")
             continue
-        inst_tmp = inst_img_feats[instid]
-        multivies_inst_img_feats = []
-        #inst_img_feat = torch.zeros(1024, dtype=torch.float32)
-        tot_weight = sum([p[0] for p in inst_tmp]).cpu()
-        for weight, feat in inst_tmp:
-            multivies_inst_img_feats.append({"weight": weight / tot_weight, "feat": feat.detach()})
-            #inst_img_feat += (weight / tot_weight) * feat.cpu()
-        #sort inst_img_feats according to weight
-        multivies_inst_img_feats.sort(key=lambda x: x["weight"], reverse=True)
         
-        all_feats[f"{scene_id}_{instid:02}"] = multivies_inst_img_feats[:4] if len(multivies_inst_img_feats) > 4 else multivies_inst_img_feats
-        #inst_img_feat.detach()
-        #print(f"{scene_id}_{instid:02}: {len(multivies_inst_img_feats)}/{len(inst_tmp)}")
-    print(f"{scene_id}: {len(all_feats)}/{inst_num}")
-    torch.save(all_feats, out_path)
+            # crop_img_feats = img_dinov2_feats[img_id, (x0 // delta_H):((x1+delta_H-1) // delta_H), (y0 // delta_W):((y1+delta_W-1) // delta_W)]
+            # inst_img_feats[instid].append((volume[instid, img_id].cpu(), crop_img_feats.flatten(0, 1).mean(0).cpu()))
+
+    # all_feats = {}
+    # for instid in range(inst_num):
+    #     if instid not in inst_img_feats:
+    #         continue
+    #     inst_tmp = inst_img_feats[instid]
+    #     multivies_inst_img_feats = []
+    #     #inst_img_feat = torch.zeros(1024, dtype=torch.float32)
+    #     tot_weight = sum([p[0] for p in inst_tmp]).cpu()
+    #     for weight, feat in inst_tmp:
+    #         multivies_inst_img_feats.append({"weight": weight / tot_weight, "feat": feat.detach()})
+    #         #inst_img_feat += (weight / tot_weight) * feat.cpu()
+    #     #sort inst_img_feats according to weight
+    #     multivies_inst_img_feats.sort(key=lambda x: x["weight"], reverse=True)
+        
+    #     all_feats[f"{scene_id}_{instid:02}"] = multivies_inst_img_feats[:4] if len(multivies_inst_img_feats) > 4 else multivies_inst_img_feats
+    #     #inst_img_feat.detach()
+    #     #print(f"{scene_id}_{instid:02}: {len(multivies_inst_img_feats)}/{len(inst_tmp)}")
+    # print(f"{scene_id}: {len(all_feats)}/{inst_num}")
+    # torch.save(all_feats, out_path)
 
 
 def main(args):
@@ -213,14 +275,15 @@ def main(args):
     elif args.data_mode == "test":
         data_paths = sorted(glob(os.path.join(data_dir, 'scans_test/*/*_vh_clean_2.ply'))) # for test split
 
+    #data_paths = data_paths[::-1]
     for data_path in data_paths:
        process_one_scene(data_path, out_dir, args)
     
-    all_feats = {}
-    for filename in os.listdir(out_dir):
-        if filename.endswith('.pt'):
-            all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
-    torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_videofeats.pt"))
+    # all_feats = {}
+    # for filename in os.listdir(out_dir):
+    #     if filename.endswith('.pt'):
+    #         all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
+    # torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_videofeats.pt"))
 
 if __name__ == "__main__":
     args = get_args()
