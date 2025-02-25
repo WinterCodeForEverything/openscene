@@ -262,8 +262,7 @@ def seg_by_SAM(image_paths):
 
 #     return results
 
-
-def visualize_projection(b, shot_mask, mask_bbox, image, output_dir="output_images"):
+def visualize_projection(b, shot_mask, mask_bbox, image, points, output_dir="output_images"):
     """
     Visualize the projection of 3D points onto a 2D image and save the output images.
     Args:
@@ -271,6 +270,7 @@ def visualize_projection(b, shot_mask, mask_bbox, image, output_dir="output_imag
         shot_mask (torch.Tensor): Tensor of shape (H, W) containing the mask.
         mask_bbox (tuple): Bounding box of the mask in format (x0, y0, x1, y1).
         image (torch.Tensor): Tensor of shape (3, H, W) containing the image.
+        points (np.ndarray): Array of shape (N, 2) containing 2D points projected on the image.
         output_dir (str): Directory to save the output images.
     """
     import matplotlib.pyplot as plt
@@ -289,11 +289,48 @@ def visualize_projection(b, shot_mask, mask_bbox, image, output_dir="output_imag
     rect = patches.Rectangle((x0, y0), x1 - x0, y1 - y0, linewidth=2, edgecolor='blue', facecolor='none')
     plt.gca().add_patch(rect)
 
+    # Plot the points
+    plt.scatter(points[:, 0], points[:, 1], c='yellow', s=10, label='Projected Points')
+
     plt.title(f"Projection on Image {b}")
+    plt.legend()
 
     output_path = os.path.join(output_dir, f"projection_{b}.jpg")
     plt.savefig(output_path)
     plt.close()
+    
+    
+# def visualize_projection(b, shot_mask, mask_bbox, image, output_dir="output_images"):
+#     """
+#     Visualize the projection of 3D points onto a 2D image and save the output images.
+#     Args:
+#         b (int): Batch index.
+#         shot_mask (torch.Tensor): Tensor of shape (H, W) containing the mask.
+#         mask_bbox (tuple): Bounding box of the mask in format (x0, y0, x1, y1).
+#         image (torch.Tensor): Tensor of shape (3, H, W) containing the image.
+#         output_dir (str): Directory to save the output images.
+#     """
+#     import matplotlib.pyplot as plt
+#     import matplotlib.patches as patches
+
+#     if not os.path.exists(output_dir):
+#         os.makedirs(output_dir)
+
+#     plt.figure(figsize=(10, 10))
+#     plt.imshow(image)
+#     mask = shot_mask
+#     plt.imshow(mask, alpha=0.5, cmap='Reds')
+
+#     # Add bounding box
+#     x0, y0, x1, y1 = mask_bbox
+#     rect = patches.Rectangle((x0, y0), x1 - x0, y1 - y0, linewidth=2, edgecolor='blue', facecolor='none')
+#     plt.gca().add_patch(rect)
+
+#     plt.title(f"Projection on Image {b}")
+
+#     output_path = os.path.join(output_dir, f"projection_{b}.jpg")
+#     plt.savefig(output_path)
+#     plt.close()
 
 
 def get_args():
@@ -377,7 +414,7 @@ def process_one_scene(data_path, out_dir, args):
         pose = np.loadtxt(posepath)
 
         # #load image and convert to tensor
-        # image = imageio.v2.imread(img_dir)
+        image = imageio.v2.imread(img_dir)
         per_img_seg_masks = all_img_seg_masks[img_id]
         
         #use SAM to seg image
@@ -443,13 +480,13 @@ def process_one_scene(data_path, out_dir, args):
                 # print(  x0, y0, x1, y1 )
                 x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
                 area = per_img_seg_masks[best_match_idx]['area']
-                # if any(category in instance_class_labels[instid] for category in needed_categories):
-                #     visualize_projection(f"{img_id}", per_img_seg_masks[best_match_idx]['segmentation'], (x0, y0, x1, y1), image, output_dir=f"./test_sam_results/{instance_class_labels[instid]}/{scene_id}_{instid}")
+                if any(category in instance_class_labels[instid] for category in needed_categories):
+                    visualize_projection(f"{img_id}", per_img_seg_masks[best_match_idx]['segmentation'], (x0, y0, x1, y1), 
+                                         image, single_inst_points, output_dir=f"./test_sam_results/{instance_class_labels[instid]}/{scene_id}_{instid}")
                 
-                crop_img_feats = img_dinov2_feats[img_id, (y0 // delta_H):((y1+delta_H-1) // delta_H), (x0 // delta_W):((x1+delta_W-1) // delta_W)]
-                inst_img_feats[instid].append((area, crop_img_feats.flatten(0, 1).mean(0).cpu()))
-                norm_ = crop_img_feats.flatten(0, 1).mean(0).cpu().norm()
-                # print(f"norm: {norm_}")
+                # crop_img_feats = img_dinov2_feats[img_id, (y0 // delta_H):((y1+delta_H-1) // delta_H), (x0 // delta_W):((x1+delta_W-1) // delta_W)]
+                # inst_img_feats[instid].append((area, crop_img_feats.flatten(0, 1).mean(0).cpu()))
+    return 
 
     all_feats = {}
     for instid in range(inst_num):
@@ -536,11 +573,11 @@ def main(args):
     for data_path in tqdm(data_paths):
        process_one_scene(data_path, out_dir, args)
     
-    all_feats = {}
-    for filename in os.listdir(out_dir):
-        if filename.endswith('.pt'):
-            all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
-    torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_sam_videofeats.pt"))
+    # all_feats = {}
+    # for filename in os.listdir(out_dir):
+    #     if filename.endswith('.pt'):
+    #         all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
+    # torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_sam_videofeats.pt"))
 
 if __name__ == "__main__":
     args = get_args()
