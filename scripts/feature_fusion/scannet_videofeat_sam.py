@@ -440,13 +440,16 @@ def process_one_scene(data_path, out_dir, args):
                 seg_masks_used[best_match_idx] = True
                 x0, y0, w, h = per_img_seg_masks[best_match_idx]['bbox']
                 x1, y1 = x0 + w, y0 + h 
+                # print(  x0, y0, x1, y1 )
                 x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
                 area = per_img_seg_masks[best_match_idx]['area']
                 # if any(category in instance_class_labels[instid] for category in needed_categories):
                 #     visualize_projection(f"{img_id}", per_img_seg_masks[best_match_idx]['segmentation'], (x0, y0, x1, y1), image, output_dir=f"./test_sam_results/{instance_class_labels[instid]}/{scene_id}_{instid}")
                 
-                crop_img_feats = img_dinov2_feats[img_id, (x0 // delta_H):((x1+delta_H-1) // delta_H), (y0 // delta_W):((y1+delta_W-1) // delta_W)]
+                crop_img_feats = img_dinov2_feats[img_id, (y0 // delta_H):((y1+delta_H-1) // delta_H), (x0 // delta_W):((x1+delta_W-1) // delta_W)]
                 inst_img_feats[instid].append((area, crop_img_feats.flatten(0, 1).mean(0).cpu()))
+                norm_ = crop_img_feats.flatten(0, 1).mean(0).cpu().norm()
+                # print(f"norm: {norm_}")
 
     all_feats = {}
     for instid in range(inst_num):
@@ -529,7 +532,7 @@ def main(args):
     # pool.map(process_scene_wrapper, data_paths)
     # pool.close()
     # pool.join()
-    data_paths = data_paths[::-1]
+    #data_paths = data_paths[::-1]
     for data_path in tqdm(data_paths):
        process_one_scene(data_path, out_dir, args)
     
