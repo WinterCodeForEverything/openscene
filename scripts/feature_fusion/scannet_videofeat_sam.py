@@ -11,7 +11,8 @@ from collections import defaultdict
 import time
 from plyfile import PlyData
 
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator
 from torch.multiprocessing import Pool, set_start_method
 
 import requests
@@ -27,24 +28,51 @@ processor = AutoImageProcessor.from_pretrained('facebook/dinov2-large')
 model = AutoModel.from_pretrained('facebook/dinov2-large').to(device)
 
 
-# Initialize the SAM model once
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_type = "vit_h"  # Options: "vit_h", "vit_l", "vit_b"
-checkpoint_path = "./checkpoints/sam_vit_h_4b8939.pth"  # Update with your checkpoint path
 
-sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
-sam.to(device=device)
+# Initialize the mobile_SAM model once
+model_type = "vit_t"
+sam_checkpoint = "./checkpoints/mobile_sam.pt"
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+mobile_sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+mobile_sam.to(device=device)
+mobile_sam.eval()
 
 # Create the mask generator once
 mask_generator = SamAutomaticMaskGenerator(
-    model=sam,
-    points_per_side=32,  # Adjust as needed
-    pred_iou_thresh=0.9,  # Filter out low-quality masks
-    stability_score_thresh=0.9,  # Filter based on mask stability
-    min_mask_region_area=100,  # Remove small masks
-    box_nms_thresh=0.8,  # Non-maximum suppression threshold for boxes
-    crop_nms_thresh=0.8  # Non-maximum suppression threshold for crops
+    model=mobile_sam,
+    points_per_side=16,  # Adjust as needed
+    pred_iou_thresh=0.95,  # Filter out low-quality masks
+    stability_score_thresh=0.95,  # Filter based on mask stability
+    min_mask_region_area=500,  # Remove small masks
+    box_nms_thresh=0.7,  # Non-maximum suppression threshold for boxes
+    crop_nms_thresh=0.7  # Non-maximum suppression threshold for crops
 )
+
+needed_categories = ['cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 
+                            'picture', 'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 
+                                    'toilet', 'sink', 'bathtub', 'other furniture']
+
+
+# # Initialize the SAM model once
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# model_type = "vit_t"  # Options: "vit_h", "vit_l", "vit_b"
+# checkpoint_path = "./checkpoints/mobile_sam.pth"  # Update with your checkpoint path
+
+# sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
+# sam.to(device=device)
+
+# # Create the mask generator once
+# mask_generator = SamAutomaticMaskGenerator(
+#     model=sam,
+#     points_per_side=16,  # Adjust as needed
+#     pred_iou_thresh=0.95,  # Filter out low-quality masks
+#     stability_score_thresh=0.95,  # Filter based on mask stability
+#     min_mask_region_area=500,  # Remove small masks
+#     box_nms_thresh=0.7,  # Non-maximum suppression threshold for boxes
+#     crop_nms_thresh=0.7  # Non-maximum suppression threshold for crops
+# )
 
 
 def get_img_embed(image_paths):
@@ -103,6 +131,7 @@ def save_seg_masks(image_paths, output_dir):
         # Save the mask image
         Image.fromarray(mask_image).save(output_image_path)
 
+
 def read_seg_masks(mask_image_path):
     """
     Read the mask image and recover the masks.
@@ -124,28 +153,6 @@ def read_seg_masks(mask_image_path):
         recovered_masks.append(recovered_mask)
 
     return recovered_masks
-
-# def read_seg_masks(mask_image_path, mask_tensor_path):
-#     """
-#     Read the mask image and recover the masks.
-
-#     Args:
-#         mask_image_path (str): Path to the mask image.
-#         mask_tensor_path (str): Path to the mask tensor file.
-
-#     Returns:
-#         list: A list of masks recovered from the mask image and tensor file.
-#     """
-#     mask_image = np.array(Image.open(mask_image_path))
-#     masks = torch.load(mask_tensor_path)
-
-#     recovered_masks = []
-#     for mask in masks:
-#         color = mask_image[mask['segmentation']][0]
-#         recovered_mask = (mask_image == color).all(axis=-1)
-#         recovered_masks.append(recovered_mask)
-
-#     return recovered_masks
 
 
 # def save_seg_masks(image_paths, output_dir):
@@ -211,49 +218,49 @@ def seg_by_SAM(image_paths):
     return masks_list
 
 
-def seg_by_SAM_online(image_paths, api_key):
-    """
-    Perform instance segmentation on a list of images using Segmind's SAM API.
+# def seg_by_SAM_online(image_paths, api_key):
+#     """
+#     Perform instance segmentation on a list of images using Segmind's SAM API.
 
-    Args:
-        image_paths (list): List of image file paths.
-        api_key (str): Your Segmind API key.
+#     Args:
+#         image_paths (list): List of image file paths.
+#         api_key (str): Your Segmind API key.
 
-    Returns:
-        list: A list containing segmentation results for each image.
-    """
-    url = "https://api.segmind.com/v1/sam-img2img"
-    headers = {'x-api-key': api_key}
-    results = []
+#     Returns:
+#         list: A list containing segmentation results for each image.
+#     """
+#     url = "https://api.segmind.com/v1/sam-img2img"
+#     headers = {'x-api-key': api_key}
+#     results = []
 
-    for image_path in image_paths:
-        # Open and convert image to base64
-        with open(image_path, "rb") as image_file:
-            image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+#     for image_path in image_paths:
+#         # Open and convert image to base64
+#         with open(image_path, "rb") as image_file:
+#             image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
 
-        # Prepare the payload
-        data = {
-            "image": image_base64,
-            "base64": True,
-            "overlay_mask": True
-        }
+#         # Prepare the payload
+#         data = {
+#             "image": image_base64,
+#             "base64": True,
+#             "overlay_mask": True
+#         }
 
-        # Send the request to the API
-        response = requests.post(url, json=data, headers=headers)
+#         # Send the request to the API
+#         response = requests.post(url, json=data, headers=headers)
 
-        if response.status_code == 200:
-            response_data = response.json()
-            masks_info = response_data.get('masks', [])
-            # Decode the base64 response to an image
-            result_image_base64 = response_data.get('image')
-            result_image_data = base64.b64decode(result_image_base64)
-            result_image = Image.open(io.BytesIO(result_image_data))
-            results.append((result_image, masks_info))
-        else:
-            print(f"Error {response.status_code}: {response.text}")
-            results.append(None)
+#         if response.status_code == 200:
+#             response_data = response.json()
+#             masks_info = response_data.get('masks', [])
+#             # Decode the base64 response to an image
+#             result_image_base64 = response_data.get('image')
+#             result_image_data = base64.b64decode(result_image_base64)
+#             result_image = Image.open(io.BytesIO(result_image_data))
+#             results.append((result_image, masks_info))
+#         else:
+#             print(f"Error {response.status_code}: {response.text}")
+#             results.append(None)
 
-    return results
+#     return results
 
 
 def visualize_projection(b, shot_mask, mask_bbox, image, output_dir="output_images"):
@@ -295,7 +302,7 @@ def get_args():
     parser = argparse.ArgumentParser(
         description='Multi-view feature fusion of OpenSeg on ScanNet.')
     parser.add_argument('--data_dir', type=str, help='Where is the base logging directory')
-    parser.add_argument('--output_dir', type=str, help='Where is the base logging directory')
+    parser.add_argument('--output_dir', type=str, help='')
     parser.add_argument('--data_mode', type=str, default='mask3d', help='GT / mask3d')
 
     # Hyper parameters
@@ -354,13 +361,15 @@ def process_one_scene(data_path, out_dir, args):
     vis_id = torch.zeros((n_points_cur, num_img), dtype=int, device=device)
     inst_img_feats = defaultdict(list)
     
-    #img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
+    img_dinov2_feats = get_img_embed(img_dirs) # (num_img, 16, 16, 1024)
     
     #reverse the order of img_dirs
-    save_seg_masks( img_dirs, os.path.join(out_dir, f"{scene_id}") )
+    #save_seg_masks( img_dirs, os.path.join(out_dir, f"{scene_id}") )
     
-    return
-    #img_seg_masks = seg_by_SAM_online(img_dirs, 'SG_a7af36142cf59781')
+    # start_time = time.time()
+    all_img_seg_masks = seg_by_SAM(img_dirs)
+    # end_time = time.time()
+    # print(f"Time taken to segment images: {end_time - start_time:.2f} seconds")
 
     for img_id, img_dir in enumerate(img_dirs):
         # load pose
@@ -369,24 +378,22 @@ def process_one_scene(data_path, out_dir, args):
 
         # #load image and convert to tensor
         # image = imageio.v2.imread(img_dir)
+        per_img_seg_masks = all_img_seg_masks[img_id]
         
-        output_pathes = save_seg_masks([img_dir], './show_sam')
-        seg_masks = torch.load(output_pathes[0])
+        #use SAM to seg image
         
-        # seg_img, seg_masks = seg_by_SAM_online([img_dir], 'SG_a7af36142cf59781')[0]
-        # #save seg_img
-        # if not os.path.exists(f"{out_dir}/{scene_id}"):
-        #     os.makedirs(f"{out_dir}/{ scene_id}")
-        # seg_img.save(f"{out_dir}/{scene_id}/{img_id}_seg.jpg")
-        #seg_masks = img_seg_masks[img_id]
-        #seg_masks = seg_by_SAM(image)
         
-        # for seg_mask in seg_masks:
-        #     print(seg_mask['area'])
-        #     print(seg_mask['segmentation'].shape)
-        # return 
+        # # Record the duration time of read_seg_masks
+        # start_time = time.time()
+        # mask_image_path = os.path.join(seg_masks_path, os.path.basename(img_dir).replace('.jpg', '_mask_image.jpg'))
+        # seg_masks = read_seg_masks(mask_image_path)
+        # end_time = time.time()
+        # print(f"Time taken to read segmentation masks: {end_time - start_time:.2f} seconds")
+        # mask_image_path = os.path.join(seg_masks_path, os.path.basename(img_dir).replace('.jpg', '_mask_image.jpg'))
+        # seg_masks = read_seg_masks(mask_image_path)
+        # print( seg_masks[0].shape )
         
-        seg_masks_used = torch.zeros((len(seg_masks)), dtype=bool)
+        seg_masks_used = torch.zeros((len(per_img_seg_masks)), dtype=bool)
         
         # for idx, seg_mask in  enumerate(seg_masks):
         #     visualize_projection(idx, seg_mask['segmentation'], image, output_dir=f"{out_dir}/{scene_id}/{img_id}")
@@ -421,7 +428,7 @@ def process_one_scene(data_path, out_dir, args):
             
             max_overlap = 0
             best_match_idx = None
-            for idx, seg_mask in enumerate(seg_masks):
+            for idx, seg_mask in enumerate(per_img_seg_masks):
                 if seg_masks_used[idx]: continue
                 mask = seg_mask['segmentation']
                 #mask_area = seg_mask['area']
@@ -431,14 +438,15 @@ def process_one_scene(data_path, out_dir, args):
                     best_match_idx = idx
             if best_match_idx is not None:
                 seg_masks_used[best_match_idx] = True
-                x0, y0, w, h = seg_masks[best_match_idx]['bbox']
+                x0, y0, w, h = per_img_seg_masks[best_match_idx]['bbox']
                 x1, y1 = x0 + w, y0 + h 
-                area = seg_masks[best_match_idx]['area']
-                visualize_projection(instid, seg_masks[best_match_idx]['segmentation'], (x0, y0, x1, y1), seg_img, output_dir=f"{out_dir}/{scene_id}/{instid}")
+                x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                area = per_img_seg_masks[best_match_idx]['area']
+                # if any(category in instance_class_labels[instid] for category in needed_categories):
+                #     visualize_projection(f"{img_id}", per_img_seg_masks[best_match_idx]['segmentation'], (x0, y0, x1, y1), image, output_dir=f"./test_sam_results/{instance_class_labels[instid]}/{scene_id}_{instid}")
                 
                 crop_img_feats = img_dinov2_feats[img_id, (x0 // delta_H):((x1+delta_H-1) // delta_H), (y0 // delta_W):((y1+delta_W-1) // delta_W)]
                 inst_img_feats[instid].append((area, crop_img_feats.flatten(0, 1).mean(0).cpu()))
-        return
 
     all_feats = {}
     for instid in range(inst_num):
@@ -525,11 +533,11 @@ def main(args):
     for data_path in tqdm(data_paths):
        process_one_scene(data_path, out_dir, args)
     
-    # all_feats = {}
-    # for filename in os.listdir(out_dir):
-    #     if filename.endswith('.pt'):
-    #         all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
-    # torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_videofeats.pt"))
+    all_feats = {}
+    for filename in os.listdir(out_dir):
+        if filename.endswith('.pt'):
+            all_feats.update(torch.load(os.path.join(out_dir, filename), map_location='cpu'))
+    torch.save(all_feats, os.path.join(data_dir, "scannet_mask3d_sam_videofeats.pt"))
 
 if __name__ == "__main__":
     args = get_args()
